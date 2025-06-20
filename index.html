@@ -47,6 +47,8 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
     <!-- Noto Sans Tamil for Tamil text -->
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Tamil&display=swap" rel="stylesheet">
+    <!-- SheetJS for Excel processing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
         body {
             font-family: 'Noto Sans Tamil', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -147,6 +149,7 @@
             box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
             display: none;
             max-width: 100%;
+            cursor: pointer;
         }
         .error {
             color: #e63946;
@@ -164,6 +167,20 @@
             font-style: italic;
             color: #555;
         }
+        .loading::before {
+            content: '';
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #555;
+            border-top-color: #25D366;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 8px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
         .language-toggle {
             text-align: center;
             margin-top: 15px;
@@ -176,7 +193,6 @@
             cursor: pointer;
             text-decoration: underline;
         }
-        /* Modal Styles */
         .modal {
             display: none;
             position: fixed;
@@ -226,10 +242,9 @@
     </style>
 </head>
 <body>
-    <!-- Language Selection Modal -->
     <div class="modal" id="languageModal">
         <div class="modal-content">
-            <h3>Select Language / மொழியைத் தேர்�ந்தெடு</h3>
+            <h3>Select Language / மொழியைத் தேர்ந்தெடு</h3>
             <button onclick="setLanguage('en')">English</button>
             <button onclick="setLanguage('ta')">தமிழ்</button>
         </div>
@@ -243,16 +258,17 @@
         <h2 id="title2">Registration</h2>
         <form id="parkingForm">
             <label for="name" id="nameLabel">Name:</label>
-            <input type="text" id="name" name="name" placeholder="Enter your name" required aria-required="true">
-            <div id="nameError" class="error" aria-live="polite">Name can only contain letters, spaces, apostrophes, or hyphens.</div>
+            <input type="text" id="name" name="name" value="ram" placeholder="Enter your name" required aria-required="true" aria-describedby="nameError">
+            <div id="nameError" class="error" aria-live="polite"></div>
             <label for="phone" id="phoneLabel">Phone Number:</label>
-            <input type="tel" id="phone" name="phone" placeholder="e.g., 9360320051" required aria-required="true">
-            <div id="phoneError" class="error" aria-live="polite">Phone number must be 10 digits.</div>
+            <input type="tel" id="phone" name="phone" value="9045667670" placeholder="e.g., 9360320051" required aria-required="true" aria-describedby="phoneError">
+            <div id="phoneError" class="error" aria-live="polite"></div>
             <label for="bikeNumber" id="bikeNumberLabel">Bike Number Plate:</label>
-            <input type="text" id="bikeNumber" name="bikeNumber" placeholder="e.g., TN564778 or TN56BZ4790" required aria-required="true">
-            <div id="bikeNumberError" class="error" aria-live="polite">Bike number must be in TNXXYYYY or TNXXAAYYYY format (e.g., TN564778 or TN56BZ4790).</div>
+            <input type="text" id="bikeNumber" name="bikeNumber" value="TN16BZ9034" placeholder="e.g., TN564778 or TN56BZ4790" required aria-required="true" aria-describedby="bikeNumberError">
+            <div id="bikeNumberError" class="error" aria-live="polite"></div>
+            <div id="qrError" class="error" aria-live="polite"></div>
             <button type="button" id="generateQrButton" onclick="generateQRCode()"><span id="generateQrText">Generate QR Code</span></button>
-            <button type="submit" id="whatsappButton" disabled><i class="fab fa-whatsapp"></i> <span id="submitText">Send to WhatsApp</span></button>
+            <button type="submit" id="whatsappButton"><i class="fab fa-whatsapp"></i> <span id="submitText">Send to WhatsApp</span></button>
         </form>
         <p id="loading" class="loading">Generating QR code...</p>
         <img id="qrCode" alt="Contact QR Code">
@@ -262,10 +278,40 @@
     </div>
 
     <script>
-        const DEFAULT_WHATSAPP_RECIPIENT = '+919360320051'; // Default WhatsApp recipient number
-        let isQrCodeGenerated = false; // Track QR code generation status
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+            return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+            if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+                try {
+                    var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                    var firstSheetName = workbook.SheetNames[0];
+                    var worksheet = workbook.Sheets[firstSheetName];
+                    var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                    var filteredData = jsonData.filter(row => row.some(filledCell));
+                    var headerRowIndex = filteredData.findIndex((row, index) =>
+                        row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                    );
+                    if (headerRowIndex === -1 || headerRowIndex > 25) {
+                        headerRowIndex = 0;
+                    }
+                    var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex));
+                    csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                    return csv;
+                } catch (e) {
+                    console.error(e);
+                    return "";
+                }
+            }
+            return gk_fileData[filename] || "";
+        }
 
-        // Language data
+        const DEFAULT_WHATSAPP_RECIPIENT = '+919360320051';
+        let isQrCodeGenerated = false;
+
         const translations = {
             en: {
                 title1: 'ADHI PARASAKTHI CYCLE STAND',
@@ -279,12 +325,13 @@
                 bikeNumberLabel: 'Bike Number Plate:',
                 bikeNumberPlaceholder: 'e.g., TN564778 or TN56BZ4790',
                 bikeNumberError: 'Bike number must be in TNXXYYYY or TNXXAAYYYY format (e.g., TN564778 or TN56BZ4790).',
+                qrError: 'Error generating QR code.',
                 generateQrText: 'Generate QR Code',
                 submitText: 'Send to WhatsApp',
                 sendingText: 'Sending...',
                 successMessage: 'Registration sent successfully!',
                 errorMessage: 'Unable to open WhatsApp. Please ensure WhatsApp is installed or check your network connection.',
-                qrCodeRequired: 'Please generate the QR code first'
+                confirmReset: 'Do you want to reset the form?'
             },
             ta: {
                 title1: 'ஆதி பராசக்தி சைக்கிள் ஸ்டாண்ட்',
@@ -298,16 +345,16 @@
                 bikeNumberLabel: 'பைக்கின் எண் பலகை:',
                 bikeNumberPlaceholder: 'எ.கா., TN564778 அல்லது TN56BZ4790',
                 bikeNumberError: 'பைக்கின் எண் TNXXYYYY அல்லது TNXXAAYYYY வடிவத்தில் இருக்க வேண்டும் (எ.கா., TN564778 அல்லது TN56BZ4790).',
+                qrError: 'QR குறியீடு உருவாக்குவதில் பிழை.',
                 generateQrText: 'QR குறியீடு உருவாக்கு',
                 submitText: 'வாட்ஸ்அப்பிற்கு அனுப்பு',
                 sendingText: 'அனுப்பப்படுகிறது...',
                 successMessage: 'பதிவு வெற்றிகரமாக அனுப்பப்பட்டது!',
                 errorMessage: 'வாட்ஸ்அப்பை திறக்க முடியவில்லை. வாட்ஸ்அப் நிறுவப்பட்டுள்ளதா அல்லது உங்கள் நெட்வொர்க்கை சரிபார்க்கவும்.',
-                qrCodeRequired: 'முதலில் QR குறியீடு உருவாக்கவும்'
+                confirmReset: 'படிவத்தை மீட்டமைக்க விரும்புகிறீர்களா?'
             }
         };
 
-        // Get elements
         const elements = {
             title1: document.getElementById('title1'),
             title2: document.getElementById('title2'),
@@ -320,6 +367,7 @@
             bikeNumberLabel: document.getElementById('bikeNumberLabel'),
             bikeNumberInput: document.getElementById('bikeNumber'),
             bikeNumberError: document.getElementById('bikeNumberError'),
+            qrError: document.getElementById('qrError'),
             generateQrButton: document.getElementById('generateQrButton'),
             generateQrText: document.getElementById('generateQrText'),
             whatsappButton: document.getElementById('whatsappButton'),
@@ -328,7 +376,6 @@
             loading: document.getElementById('loading')
         };
 
-        // Language functions
         function setLanguage(lang) {
             localStorage.setItem('language', lang);
             const t = translations[lang];
@@ -343,6 +390,7 @@
             elements.bikeNumberLabel.textContent = t.bikeNumberLabel;
             elements.bikeNumberInput.placeholder = t.bikeNumberPlaceholder;
             elements.bikeNumberError.textContent = t.bikeNumberError;
+            elements.qrError.textContent = t.qrError;
             elements.generateQrText.textContent = t.generateQrText;
             elements.submitText.textContent = t.submitText;
             document.getElementById('languageModal').style.display = 'none';
@@ -352,16 +400,13 @@
             document.getElementById('languageModal').style.display = 'flex';
         }
 
-        // Initialize language
         const savedLanguage = localStorage.getItem('language') || 'en';
         setLanguage(savedLanguage);
 
-        // Show modal on first load if no language is saved
         if (!localStorage.getItem('language')) {
             showLanguageModal();
         }
 
-        // Validation functions
         function validateName(name) {
             const nameRegex = /^[A-Za-z\s'-]+$/;
             return nameRegex.test(name);
@@ -373,79 +418,95 @@
         }
 
         function validateBikeNumber(bikeNumber) {
-            const bikeNumberRegex = /^TN[0-9]{1,2}[A-Z]{0,2}[0-9]{3,4}$/;
+            const bikeNumberRegex = /^TN[0-9]{2}([A-Z]{2})?[0-9]{4}$/;
             return bikeNumberRegex.test(bikeNumber);
+        }
+
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
         }
 
         function updateButtonStates() {
             const isNameValid = validateName(elements.nameInput.value.trim());
             const isPhoneValid = validatePhone(elements.phoneInput.value);
             const isBikeNumberValid = validateBikeNumber(elements.bikeNumberInput.value.trim().toUpperCase());
-            elements.whatsappButton.disabled = !(isNameValid && isPhoneValid && isBikeNumberValid && isQrCodeGenerated);
-            elements.generateQrButton.disabled = isQrCodeGenerated; // Disable if QR code is generated
+            elements.whatsappButton.disabled = !(isNameValid && isPhoneValid && isBikeNumberValid);
+            elements.generateQrButton.disabled = isQrCodeGenerated;
         }
 
-        // Input event listeners
-        elements.nameInput.addEventListener('input', () => {
+        elements.nameInput.addEventListener('input', debounce(() => {
             isQrCodeGenerated = false;
             elements.qrCode.style.display = 'none';
             elements.nameError.classList.remove('show');
             updateButtonStates();
-        });
+        }, 300));
 
-        elements.phoneInput.addEventListener('input', () => {
+        elements.phoneInput.addEventListener('input', debounce(() => {
             isQrCodeGenerated = false;
             elements.qrCode.style.display = 'none';
             elements.phoneError.classList.remove('show');
             updateButtonStates();
-        });
+        }, 300));
 
-        elements.bikeNumberInput.addEventListener('input', () => {
+        elements.bikeNumberInput.addEventListener('input', debounce(() => {
             isQrCodeGenerated = false;
             elements.qrCode.style.display = 'none';
             elements.bikeNumberError.classList.remove('show');
             updateButtonStates();
-        });
+        }, 300));
 
-        // QR Code generation
         function generateQRCode() {
-            const errorMsg = elements.nameError; // Reuse nameError for QR code errors
             const lang = localStorage.getItem('language') || 'en';
             const t = translations[lang];
 
-            // Clear previous states
-            errorMsg.classList.remove('show');
-            errorMsg.textContent = t.nameError; // Reset to default error
+            elements.nameError.classList.remove('show');
+            elements.phoneError.classList.remove('show');
+            elements.bikeNumberError.classList.remove('show');
+            elements.qrError.classList.remove('show');
             elements.qrCode.style.display = 'none';
             elements.loading.style.display = 'block';
             isQrCodeGenerated = false;
 
-            // Validate inputs
             const name = elements.nameInput.value.trim();
             const phone = elements.phoneInput.value.replace(/\s/g, '');
+            const bikeNumber = elements.bikeNumberInput.value.trim().toUpperCase();
+
+            let isValid = true;
+
             if (!validateName(name)) {
                 elements.nameError.classList.add('show');
-                elements.loading.style.display = 'none';
-                updateButtonStates();
-                return;
+                isValid = false;
             }
             if (!validatePhone(phone)) {
                 elements.phoneError.classList.add('show');
+                isValid = false;
+            }
+            if (!validateBikeNumber(bikeNumber)) {
+                elements.bikeNumberError.classList.add('show');
+                isValid = false;
+            }
+
+            if (!isValid) {
                 elements.loading.style.display = 'none';
                 updateButtonStates();
                 return;
             }
 
-            // Generate JSON data
-            const data = [{ Name: name, Phone: phone }];
+            const data = [{ Name: name, Phone: phone, BikeNumber: bikeNumber }];
             const jsonString = JSON.stringify(data);
             const qrCodeUrl = `https://quickchart.io/qr?text=${encodeURIComponent(jsonString)}&size=200`;
 
             fetch(qrCodeUrl)
                 .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Failed to fetch QR code');
-                    }
+                    if (!response.ok) throw new Error('Failed to fetch QR code');
                     return response.blob();
                 })
                 .then(blob => {
@@ -457,8 +518,8 @@
                     updateButtonStates();
                 })
                 .catch(error => {
-                    errorMsg.textContent = lang === 'en' ? 'Error generating QR code' : 'QR குறியீடு உருவாக்குவதில் பிழை';
-                    errorMsg.classList.add('show');
+                    elements.qrError.textContent = t.qrError;
+                    elements.qrError.classList.add('show');
                     elements.qrCode.style.display = 'none';
                     elements.loading.style.display = 'none';
                     isQrCodeGenerated = false;
@@ -466,7 +527,13 @@
                 });
         }
 
-        // Form submission
+        elements.qrCode.addEventListener('click', () => {
+            const link = document.createElement('a');
+            link.href = elements.qrCode.src;
+            link.download = 'parking_qr_code.png';
+            link.click();
+        });
+
         document.getElementById('parkingForm').addEventListener('submit', function(event) {
             event.preventDefault();
 
@@ -475,60 +542,54 @@
             const lang = localStorage.getItem('language') || 'en';
             const t = translations[lang];
 
-            // Reset error messages
             elements.nameError.classList.remove('show');
             elements.phoneError.classList.remove('show');
             elements.bikeNumberError.classList.remove('show');
+            elements.qrError.classList.remove('show');
 
-            const name = elements.nameInput.value.trim().toUpperCase();
+            const name = elements.nameInput.value.trim();
             const phone = elements.phoneInput.value.replace(/\s/g, '');
             const bikeNumber = elements.bikeNumberInput.value.trim().toUpperCase();
 
-            // Validation
             let isValid = true;
 
             if (!validateName(name)) {
                 elements.nameError.classList.add('show');
                 isValid = false;
             }
-
             if (!validatePhone(phone)) {
                 elements.phoneError.classList.add('show');
                 isValid = false;
             }
-
             if (!validateBikeNumber(bikeNumber)) {
                 elements.bikeNumberError.classList.add('show');
                 isValid = false;
             }
 
-            if (!isQrCodeGenerated) {
-                elements.nameError.textContent = t.qrCodeRequired;
-                elements.nameError.classList.add('show');
-                isValid = false;
-            }
-
             if (!isValid) return;
 
-            // Disable button
             elements.whatsappButton.disabled = true;
             elements.submitText.textContent = t.sendingText;
 
-            // Construct and encode message
             const message = encodeURIComponent(`Name: ${name}\nPhone: ${phone}\nBike Number: ${bikeNumber}`);
             const whatsappUrl = `https://wa.me/${DEFAULT_WHATSAPP_RECIPIENT.replace('+', '')}?text=${message}`;
 
             try {
                 window.open(whatsappUrl, '_blank');
                 setTimeout(() => {
-                    document.getElementById('parkingForm').reset();
-                    elements.qrCode.style.display = 'none';
-                    isQrCodeGenerated = false;
-                    elements.whatsappButton.disabled = true;
-                    elements.generateQrButton.disabled = false;
-                    elements.submitText.textContent = t.submitText;
-                    updateButtonStates();
-                    alert(t.successMessage);
+                    if (confirm(t.confirmReset)) {
+                        document.getElementById('parkingForm').reset();
+                        elements.qrCode.style.display = 'none';
+                        isQrCodeGenerated = false;
+                        elements.whatsappButton.disabled = true;
+                        elements.generateQrButton.disabled = false;
+                        elements.submitText.textContent = t.submitText;
+                        updateButtonStates();
+                        alert(t.successMessage);
+                    } else {
+                        elements.whatsappButton.disabled = false;
+                        elements.submitText.textContent = t.submitText;
+                    }
                 }, 1000);
             } catch (error) {
                 console.error('Error opening WhatsApp URL:', error);
@@ -538,7 +599,6 @@
             }
         });
 
-        // Initialize button states
         updateButtonStates();
     </script>
 </body>
